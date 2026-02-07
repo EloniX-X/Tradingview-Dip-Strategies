@@ -1,0 +1,109 @@
+
+//@version=5
+indicator("Kotegawa Dip Reversal", overlay=true, max_labels_count=500)
+
+dipPct          = input.float(20.0, "Dip % below 25-day MA", minval=0, step=0.25)
+
+maLen           = input.int(25, "MA Length (days)", minval=1)
+maTF            = input.timeframe("D", "MA Timeframe (use D for true 25-day MA on intraday)")
+
+rsiLen          = input.int(14, "RSI Length", minval=1)
+rsiOversold     = input.float(24.0, "RSI Oversold (<=)", minval=1, maxval=99, step=0.5)
+useRSIFilter    = input.bool(true, "Require RSI oversold?")
+
+bbLen           = input.int(20, "BB Length", minval=1)
+bbMult          = input.float(2.0, "BB Mult", minval=0.1, step=0.1)
+useBBFilter     = input.bool(true, "Require price <= Lower BB?")
+
+dipUses         = input.string("Low", "Dip check uses", options=["Low", "Close"])
+confirmBull     = input.string("Close>Open", "Bull confirmation", options=["Close>Open", "Close>Open & Close>PrevClose"])
+
+showBB          = input.bool(true, "Plot Bollinger Bands")
+showDipLine     = input.bool(true, "Plot Dip Threshold (MA - dip%)")
+
+showTPGuides    = input.bool(true, "Show TP guide markers (mean reversion)")
+tpGuideMode     = input.string("MA or BB Basis", "TP guide trigger", options=["MA", "BB Basis", "MA or BB Basis"])
+
+resetDaily      = input.bool(false, "Reset pending setup each new day (same-session style)?")
+
+srcDip = dipUses == "Low" ? low : close
+
+ma25 = request.security(syminfo.tickerid, maTF, ta.sma(close, maLen), barmerge.gaps_off, barmerge.lookahead_off)
+
+dipLevel = ma25 * (1.0 - dipPct / 100.0)
+pctBelow = (ma25 - close) / ma25 * 100.0
+
+bbBasis = ta.sma(close, bbLen)
+bbDev   = bbMult * ta.stdev(close, bbLen)
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+
+rsi = ta.rsi(close, rsiLen)
+
+dipOK   = srcDip <= dipLevel
+rsiOK   = rsi <= rsiOversold
+bbOK    = srcDip <= bbLower
+
+filtersOK = (not useRSIFilter or rsiOK) and (not useBBFilter or bbOK)
+setupOK   = dipOK and filtersOK
+
+bull1 = close > open
+bull2 = close > open and close > close[1]
+bull  = confirmBull == "Close>Open" ? bull1 : bull2
+
+newDay = ta.change(time("D"))
+
+var bool pending = false
+
+if resetDaily and newDay
+    pending := false
+
+if setupOK
+    pending := true
+
+entrySignal = pending and bull
+
+if entrySignal
+    pending := false
+
+tpMA    = ta.crossover(close, ma25) or close >= ma25
+tpBasis = ta.crossover(close, bbBasis) or close >= bbBasis
+
+tpHit =
+     not showTPGuides ? false :
+     tpGuideMode == "MA" ? tpMA :
+     tpGuideMode == "BB Basis" ? tpBasis :
+     (tpMA or tpBasis)
+
+var int lastEntryBar = na
+if entrySignal
+    lastEntryBar := bar_index
+
+recentEntry = not na(lastEntryBar) and (bar_index - lastEntryBar) <= 50
+tpSignal    = recentEntry and tpHit
+
+plot(ma25, "25-day MA (tf)", color=color.orange, linewidth=2)
+
+plot(showDipLine ? dipLevel : na, "Dip Threshold (MA - %)", color=color.new(color.orange, 35), linewidth=2, style=plot.style_line)
+
+plot(showBB ? bbUpper : na, "BB Upper", color=color.new(color.blue, 35))
+plot(showBB ? bbBasis : na, "BB Basis", color=color.new(color.blue, 65))
+plot(showBB ? bbLower : na, "BB Lower", color=color.new(color.blue, 35))
+
+plotshape(entrySignal, title="Long Entry (next green candle)", style=shape.triangleup, location=location.belowbar, size=size.small, color=color.new(color.purple, 0), text="LONG")
+
+plotshape(tpSignal, title="TP Guide", style=shape.circle, location=location.abovebar, size=size.tiny, color=color.new(color.green, 0), text="TP")
+
+bgcolor(pending ? color.new(color.purple, 90) : na)
+
+alertcondition(entrySignal, title="Kotegawa Long Entry", message="Kotegawa-style entry: setup met and next bullish candle printed.")
+alertcondition(tpSignal, title="Kotegawa TP Guide", message="TP guide: price reverted to MA/BB basis (per settings).")
+
+
+var table t = table.new(position.top_right, 1, 3)
+if barstate.islast
+    table.cell(t, 0, 0, "Pct below 25D MA: " + str.tostring(pctBelow, "#.##") + "%")
+    table.cell(t, 0, 1, "RSI(" + str.tostring(rsiLen) + "): " + str.tostring(rsi, "#.##"))
+    table.cell(t, 0, 2, pending ? "Status: PENDING (waiting green candle)" : "Status: idle")
+
+plotshape(entrySignal, title="Long Entry Arrow", style=shape.arrowup, location=location.belowbar, size=size.large, color=color.new(color.purple, 0), text="BUY")
