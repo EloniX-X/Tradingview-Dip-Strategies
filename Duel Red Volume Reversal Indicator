@@ -1,0 +1,47 @@
+
+//@version=5
+indicator("Dual Red Volume Revesal Indicator", overlay=true, max_labels_count=500)
+
+
+volMaLen     = input.int(20, "Volume MA length", minval=1)
+highVolMult  = input.float(1.5, "High volume: vol >= volMA ×", minval=0.1, step=0.1)
+
+atrLen       = input.int(14, "ATR length", minval=1)
+bigRedATR    = input.float(0.8, "Big red body >= ATR ×", minval=0.1, step=0.1)
+
+requireSmallPrevGreen = input.bool(false, "Require a small green candle before the 2 reds?")
+smallBodyPct  = input.float(0.4, "Small body: body/range <=", minval=0.05, maxval=1.0, step=0.05)
+
+showBg       = input.bool(false, "Highlight background on signal")
+showArrow    = input.bool(true, "Show green arrow")
+
+
+isGreen(i) => close[i] > open[i]
+isRed(i)   => close[i] < open[i]
+
+realBody(i) => math.abs(close[i] - open[i])
+barRange(i) => high[i] - low[i]
+isSmallBody(i) =>
+    r = barRange(i)
+    r > 0 ? (realBody(i) / r) <= smallBodyPct : false
+
+volMA = ta.sma(volume, volMaLen)
+atrV  = ta.atr(atrLen)
+
+isHighVol(i) => volume[i] >= volMA[i] * highVolMult
+isBigRed(i)  => isRed(i) and realBody(i) >= atrV[i] * bigRedATR
+
+
+prevSmallGreenOk = not requireSmallPrevGreen or (isGreen(3) and isSmallBody(3))
+
+twoReds = isBigRed(2) and isHighVol(2) and isBigRed(1) and isHighVol(1)
+signal = isGreen(0)
+
+pattern = prevSmallGreenOk and twoReds and signal
+
+
+bgcolor(showBg and pattern ? color.new(color.lime, 85) : na)
+
+plotshape(showArrow and pattern, title="DRV Arrow", style=shape.triangleup, location=location.belowbar, size=size.small, color=color.lime, text="")
+
+alertcondition(pattern, title="Duel Red Volume Reversal Alert", message="Signal on {{ticker}} @ {{interval}}")
